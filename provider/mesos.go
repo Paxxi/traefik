@@ -186,7 +186,7 @@ func taskInSlice(a state.Task, list []state.Task) bool {
 
 // labels returns all given Status.[]Labels' values whose keys are equal
 // to the given key
-func labels(task state.Task, key string) string {
+func mesosLabels(task state.Task, key string) string {
 	for _, l := range task.Labels {
 		if l.Key == key {
 			return l.Value
@@ -206,21 +206,21 @@ func mesosTaskFilter(task state.Task, exposedByDefaultFlag bool) bool {
 	}
 
 	//filter indeterminable task port
-	portIndexLabel := labels(task, "traefik.portIndex")
-	portValueLabel := labels(task, "traefik.port")
+	portIndexLabel := mesosLabels(task, "traefik.portIndex")
+	portValueLabel := mesosLabels(task, "traefik.port")
 	if portIndexLabel != "" && portValueLabel != "" {
 		log.Debugf("Filtering mesos task %s specifying both traefik.portIndex and traefik.port labels", task.Name)
 		return false
 	}
 	if portIndexLabel != "" {
-		index, err := strconv.Atoi(labels(task, "traefik.portIndex"))
+		index, err := strconv.Atoi(mesosLabels(task, "traefik.portIndex"))
 		if err != nil || index < 0 || index > len(task.DiscoveryInfo.Ports.DiscoveryPorts)-1 {
 			log.Debugf("Filtering mesos task %s with unexpected value for traefik.portIndex label", task.Name)
 			return false
 		}
 	}
 	if portValueLabel != "" {
-		port, err := strconv.Atoi(labels(task, "traefik.port"))
+		port, err := strconv.Atoi(mesosLabels(task, "traefik.port"))
 		if err != nil {
 			log.Debugf("Filtering mesos task %s with unexpected value for traefik.port label", task.Name)
 			return false
@@ -259,7 +259,7 @@ func getMesos(task state.Task, apps []state.Task) (state.Task, error) {
 }
 
 func isMesosApplicationEnabled(task state.Task, exposedByDefault bool) bool {
-	return exposedByDefault && labels(task, "traefik.enable") != "false" || labels(task, "traefik.enable") == "true"
+	return exposedByDefault && mesosLabels(task, "traefik.enable") != "false" || mesosLabels(task, "traefik.enable") == "true"
 }
 
 func (provider *Mesos) getLabel(task state.Task, label string) (string, error) {
