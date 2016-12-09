@@ -2,6 +2,7 @@ package provider
 
 import (
 	"errors"
+	"strconv"
 	"text/template"
 	"time"
 
@@ -14,53 +15,55 @@ import (
 	"github.com/containous/traefik/log"
 	"github.com/containous/traefik/safe"
 	"github.com/containous/traefik/types"
+	"github.com/docker/go-connections/nat"
 	"github.com/rancher/go-rancher-metadata/metadata"
 )
 
 type RancherMetadata struct {
-	BaseProvider `mapstructure:",squash"`
-	Endpoint     string `description:"Rancher metadata endpoint http://rancher-metadata/2015-12-19"`
-	Client       metadata.Client
+	BaseProvider     `mapstructure:",squash"`
+	Endpoint         string `description:"Rancher metadata endpoint http://rancher-metadata/2015-12-19"`
+	Client           metadata.Client
+	ExposedByDefault bool `description:"Should ports be exposed by default"`
 }
 
-func (provider *RancherMetadata) hasCircuitBreakerLabel(container metadata.Service) bool {
+func (provider *RancherMetadata) hasCircuitBreakerLabel(container DockerData) bool {
 	return labels.HasCircuitBreakerLabel(container.Labels)
 }
 
-func (provider *RancherMetadata) hasLoadBalancerLabel(container metadata.Service) bool {
+func (provider *RancherMetadata) hasLoadBalancerLabel(container DockerData) bool {
 	return labels.HasLoadBalancerLabel(container.Labels)
 }
 
-func (provider *RancherMetadata) hasMaxConnLabels(container metadata.Service) bool {
+func (provider *RancherMetadata) hasMaxConnLabels(container DockerData) bool {
 	return labels.HasMaxConnLabels(container.Labels)
 }
 
-func (provider *RancherMetadata) getCircuitBreakerExpression(container metadata.Service) string {
+func (provider *RancherMetadata) getCircuitBreakerExpression(container DockerData) string {
 	return labels.GetCircuitBreakerExpression(container.Labels)
 }
 
-func (provider *RancherMetadata) getLoadBalancerMethod(container metadata.Service) string {
+func (provider *RancherMetadata) getLoadBalancerMethod(container DockerData) string {
 	return labels.GetLoadBalancerMethod(container.Labels)
 }
 
-func (provider *RancherMetadata) getMaxConnAmount(container metadata.Service) int64 {
+func (provider *RancherMetadata) getMaxConnAmount(container DockerData) int64 {
 	return labels.GetMaxConnAmount(container.Labels)
 }
 
-func (provider *RancherMetadata) getMaxConnExtractorFunc(container metadata.Service) string {
+func (provider *RancherMetadata) getMaxConnExtractorFunc(container DockerData) string {
 	return labels.GetMaxConnExtractorFunc(container.Labels)
 }
-func (provider *RancherMetadata) getFrontendName(container metadata.Service) string {
-	return labels.GetFrontendName(container.Labels, "Host:"+container.Fqdn)
+func (provider *RancherMetadata) getFrontendName(container DockerData) string {
+	return labels.GetFrontendName(container.Labels, "Host:Error")
 }
 
 // GetFrontendRule returns the frontend rule for the specified container, using
 // it's label. It returns a default one (Host) if the label is not present.
-func (provider *RancherMetadata) getFrontendRule(container metadata.Service) string {
-	return labels.GetFrontendName(container.Labels, "Host:"+container.Fqdn)
+func (provider *RancherMetadata) getFrontendRule(container DockerData) string {
+	return labels.GetFrontendName(container.Labels, "Host:Error")
 }
 
-func (provider *RancherMetadata) getBackend(container metadata.Service) string {
+func (provider *RancherMetadata) getBackend(container DockerData) string {
 	return labels.GetBackend(container.Labels, container.Name)
 }
 
@@ -84,31 +87,31 @@ func (provider *RancherMetadata) getPort(container metadata.Container) string {
 	return ""
 }
 
-func (provider *RancherMetadata) getWeight(container metadata.Service) string {
+func (provider *RancherMetadata) getWeight(container DockerData) string {
 	return labels.GetWeight(container.Labels)
 }
 
-func (provider *RancherMetadata) getSticky(container metadata.Service) string {
+func (provider *RancherMetadata) getSticky(container DockerData) string {
 	return labels.GetSticky(container.Labels)
 }
 
-func (provider *RancherMetadata) getDomain(container metadata.Service) string {
-	return labels.GetDomain(container.Labels, container.Fqdn)
+func (provider *RancherMetadata) getDomain(container DockerData) string {
+	return labels.GetDomain(container.Labels, "Error")
 }
 
-func (provider *RancherMetadata) getProtocol(container metadata.Service) string {
+func (provider *RancherMetadata) getProtocol(container DockerData) string {
 	return labels.GetProtocol(container.Labels)
 }
 
-func (provider *RancherMetadata) getPassHostHeader(container metadata.Service) string {
+func (provider *RancherMetadata) getPassHostHeader(container DockerData) string {
 	return labels.GetPassHostHeader(container.Labels)
 }
 
-func (provider *RancherMetadata) getPriority(container metadata.Service) string {
+func (provider *RancherMetadata) getPriority(container DockerData) string {
 	return labels.GetPriority(container.Labels)
 }
 
-func (provider *RancherMetadata) getEntryPoints(container metadata.Service) []string {
+func (provider *RancherMetadata) getEntryPoints(container DockerData) []string {
 	return labels.GetEntryPoints(container.Labels)
 }
 
@@ -116,7 +119,7 @@ func (provider *RancherMetadata) isContainerEnabled(container metadata.Service, 
 	return labels.IsContainerEnabled(container.Labels, exposedByDefault)
 }
 
-func (provider *RancherMetadata) buildConfig(services []metadata.Service) *types.Configuration {
+func (provider *RancherMetadata) buildConfig(containers []DockerData) *types.Configuration {
 	var FuncMap = template.FuncMap{
 		"getBackend":                  provider.getBackend,
 		"getIPAddress":                provider.getIPAddress,
@@ -139,72 +142,86 @@ func (provider *RancherMetadata) buildConfig(services []metadata.Service) *types
 		"replace":                     replace,
 	}
 
-	allNodes := []metadata.Container{}
-	for _, s := range services {
-		allNodes = append(allNodes, s.Containers...)
+	// filter containers
+	filteredContainers := fun.Filter(func(container DockerData) bool {
+		return provider.containerFilter(container)
+	}, containers).([]DockerData)
+
+	frontends := map[string][]DockerData{}
+	backends := map[string]DockerData{}
+	servers := map[string][]DockerData{}
+	for _, container := range filteredContainers {
+		frontendName := provider.getFrontendName(container)
+		frontends[frontendName] = append(frontends[frontendName], container)
+		backendName := provider.getBackend(container)
+		backends[backendName] = container
+		servers[backendName] = append(servers[backendName], container)
 	}
-	// Ensure a stable ordering of nodes so that identical configurations may be detected
-	// sort.Sort(nodeSorter(allNodes))
 
 	templateObjects := struct {
-		Services []metadata.Service
-		Nodes    []metadata.Container
+		Containers []DockerData
+		Frontends  map[string][]DockerData
+		Backends   map[string]DockerData
+		Servers    map[string][]DockerData
 	}{
-		Services: services,
-		Nodes:    allNodes,
+		filteredContainers,
+		frontends,
+		backends,
+		servers,
 	}
 
-	configuration, err := provider.getConfiguration("templates/rancher_metadata.tmpl", FuncMap, templateObjects)
+	configuration, err := provider.getConfiguration("templates/docker.tmpl", FuncMap, templateObjects)
 	if err != nil {
-		log.WithError(err).Error("Failed to create config")
+		log.Error(err)
 	}
-
 	return configuration
 }
 
-func (provider *RancherMetadata) filterContainers(service *metadata.Service) bool {
-	if len(service.Containers) == 0 {
-		return false
+func (provider *RancherMetadata) parseContainer(container metadata.Container) DockerData {
+	dockerData := DockerData{
+		NetworkSettings: NetworkSettings{},
 	}
 
-	containers := fun.Filter(func(container metadata.Container) bool {
-		for k := range container.Labels {
-			if strings.Contains(k, "traefik") {
-				return strings.Contains(strings.ToLower(container.HealthState), "healthy")
-			}
+	dockerData.Name = container.Name
+	dockerData.Health = container.HealthState
+	dockerData.Labels = container.Labels
+	if container.Ports != nil {
+		for _, p := range container.Ports {
+			dockerData.NetworkSettings.Ports[nat.Port(p)] =
+				[]nat.PortBinding{
+					{
+						HostIP:   container.PrimaryIp,
+						HostPort: p,
+					},
+				}
 		}
-		return false
-	}, service.Containers).([]metadata.Container)
-
-	if len(containers) == 0 {
-		return false
+	}
+	dockerData.NetworkSettings.Networks[container.NetworkUUID] = &NetworkData{
+		ID:   container.NetworkUUID,
+		Name: container.NetworkUUID,
+		Addr: container.PrimaryIp,
 	}
 
-	service.Containers = containers
-
-	return true
+	return dockerData
 }
 
-func (provider *RancherMetadata) getServices() ([]metadata.Service, error) {
-	services, err := provider.Client.GetServices()
+func (provider *RancherMetadata) getContainers() ([]DockerData, error) {
+	containers, err := provider.Client.GetContainers()
 	if err != nil {
 		return nil, err
 	}
 
-	validServices := fun.Filter(func(service metadata.Service) bool {
-		for k := range service.Labels {
-			if strings.Contains(k, "traefik") && provider.filterContainers(&service) {
-				return true
-			}
-		}
-		return false
-	}, services).([]metadata.Service)
+	result := []DockerData{}
+	for _, c := range containers {
+		dockerData := provider.parseContainer(c)
+		result = append(result, dockerData)
+	}
 
-	return validServices, nil
+	return result, nil
 }
 
-func (provider *RancherMetadata) pollServices(stopCh <-chan struct{}) <-chan []metadata.Service {
-	watchCh := make(chan []metadata.Service)
+func (provider *RancherMetadata) pollServices(stopCh <-chan struct{}) <-chan []DockerData {
+	watchCh := make(chan []DockerData)
 
 	tickerCh := time.NewTicker(5 * time.Second).C
 
@@ -216,7 +233,7 @@ func (provider *RancherMetadata) pollServices(stopCh <-chan struct{}) <-chan []m
 			case <-stopCh:
 				return
 			case <-tickerCh:
-				data, err := provider.getServices()
+				data, err := provider.getContainers()
 				if err != nil {
 					log.WithError(err).Errorf("Failed to list services")
 					return
@@ -283,4 +300,90 @@ func (provider *RancherMetadata) Provide(configurationChan chan<- types.ConfigMe
 	})
 
 	return err
+}
+
+func (provider *RancherMetadata) containerFilter(container DockerData) bool {
+	_, err := strconv.Atoi(container.Labels["traefik.port"])
+	if len(container.NetworkSettings.Ports) == 0 && err != nil {
+		log.Debugf("Filtering container without port and no traefik.port label %s", container.Name)
+		return false
+	}
+
+	if !isContainerEnabled(container, provider.ExposedByDefault) {
+		log.Debugf("Filtering disabled container %s", container.Name)
+		return false
+	}
+
+	constraintTags := strings.Split(container.Labels["traefik.tags"], ",")
+	if ok, failingConstraint := provider.MatchConstraints(constraintTags); !ok {
+		if failingConstraint != nil {
+			log.Debugf("Container %v pruned by '%v' constraint", container.Name, failingConstraint.String())
+		}
+		return false
+	}
+
+	if container.Health != "" && container.Health != "healthy" {
+		log.Debugf("Filtering unhealthy or starting container %s", container.Name)
+		return false
+	}
+
+	return true
+}
+
+func (provider *RancherMetadata) loadDockerConfig(containersInspected []DockerData) *types.Configuration {
+	var DockerFuncMap = template.FuncMap{
+		"getBackend":                  provider.getBackend,
+		"getIPAddress":                provider.getIPAddress,
+		"getPort":                     provider.getPort,
+		"getWeight":                   provider.getWeight,
+		"getDomain":                   provider.getDomain,
+		"getProtocol":                 provider.getProtocol,
+		"getPassHostHeader":           provider.getPassHostHeader,
+		"getPriority":                 provider.getPriority,
+		"getEntryPoints":              provider.getEntryPoints,
+		"getFrontendRule":             provider.getFrontendRule,
+		"hasCircuitBreakerLabel":      provider.hasCircuitBreakerLabel,
+		"getCircuitBreakerExpression": provider.getCircuitBreakerExpression,
+		"hasLoadBalancerLabel":        provider.hasLoadBalancerLabel,
+		"getLoadBalancerMethod":       provider.getLoadBalancerMethod,
+		"hasMaxConnLabels":            provider.hasMaxConnLabels,
+		"getMaxConnAmount":            provider.getMaxConnAmount,
+		"getMaxConnExtractorFunc":     provider.getMaxConnExtractorFunc,
+		"getSticky":                   provider.getSticky,
+		"replace":                     replace,
+	}
+
+	// filter containers
+	filteredContainers := fun.Filter(func(container DockerData) bool {
+		return provider.containerFilter(container)
+	}, containersInspected).([]DockerData)
+
+	frontends := map[string][]DockerData{}
+	backends := map[string]DockerData{}
+	servers := map[string][]DockerData{}
+	for _, container := range filteredContainers {
+		frontendName := provider.getFrontendName(container)
+		frontends[frontendName] = append(frontends[frontendName], container)
+		backendName := provider.getBackend(container)
+		backends[backendName] = container
+		servers[backendName] = append(servers[backendName], container)
+	}
+
+	templateObjects := struct {
+		Containers []DockerData
+		Frontends  map[string][]DockerData
+		Backends   map[string]DockerData
+		Servers    map[string][]DockerData
+	}{
+		filteredContainers,
+		frontends,
+		backends,
+		servers,
+	}
+
+	configuration, err := provider.getConfiguration("templates/rancher.tmpl", DockerFuncMap, templateObjects)
+	if err != nil {
+		log.Error(err)
+	}
+	return configuration
 }

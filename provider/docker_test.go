@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/containous/traefik/labels"
 	"github.com/containous/traefik/types"
 	docker "github.com/docker/engine-api/types"
 	"github.com/docker/engine-api/types/container"
@@ -614,7 +615,7 @@ func TestDockerGetLabel(t *testing.T) {
 
 	for _, e := range containers {
 		dockerData := parseContainer(e.container)
-		label, err := getLabel(dockerData, "foo")
+		label, err := labels.GetLabel(dockerData.Labels, "foo")
 		if e.expected != "" {
 			if err == nil || !strings.Contains(err.Error(), e.expected) {
 				t.Fatalf("expected an error with %q, got %v", e.expected, err)
@@ -681,7 +682,7 @@ func TestDockerGetLabels(t *testing.T) {
 
 	for _, e := range containers {
 		dockerData := parseContainer(e.container)
-		labels, err := getLabels(dockerData, []string{"foo", "bar"})
+		labels, err := labels.GetLabels(dockerData.Labels, []string{"foo", "bar"})
 		if !reflect.DeepEqual(labels, e.expectedLabels) {
 			t.Fatalf("expect %v, got %v", e.expectedLabels, labels)
 		}
@@ -1136,7 +1137,7 @@ func TestDockerLoadDockerConfig(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		var dockerDataList []dockerData
+		var dockerDataList []DockerData
 		for _, container := range c.containers {
 			dockerData := parseContainer(container)
 			dockerDataList = append(dockerDataList, dockerData)
@@ -1757,7 +1758,7 @@ func TestSwarmGetLabel(t *testing.T) {
 
 	for _, e := range services {
 		dockerData := parseService(e.service, e.networks)
-		label, err := getLabel(dockerData, "foo")
+		label, err := labels.GetLabel(dockerData.Labels, "foo")
 		if e.expected != "" {
 			if err == nil || !strings.Contains(err.Error(), e.expected) {
 				t.Fatalf("expected an error with %q, got %v", e.expected, err)
@@ -1829,7 +1830,7 @@ func TestSwarmGetLabels(t *testing.T) {
 
 	for _, e := range services {
 		dockerData := parseService(e.service, e.networks)
-		labels, err := getLabels(dockerData, []string{"foo", "bar"})
+		labels, err := labels.GetLabels(dockerData.Labels, []string{"foo", "bar"})
 		if !reflect.DeepEqual(labels, e.expectedLabels) {
 			t.Fatalf("expect %v, got %v", e.expectedLabels, labels)
 		}
@@ -2169,7 +2170,7 @@ func TestSwarmLoadDockerConfig(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		var dockerDataList []dockerData
+		var dockerDataList []DockerData
 		for _, service := range c.services {
 			dockerData := parseService(service, c.networks)
 			dockerDataList = append(dockerDataList, dockerData)

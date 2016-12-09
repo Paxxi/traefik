@@ -52,22 +52,22 @@ type Docker struct {
 }
 
 // dockerData holds the need data to the Docker provider
-type dockerData struct {
+type DockerData struct {
 	Name            string
 	Labels          map[string]string // List of labels set to container or service
-	NetworkSettings networkSettings
+	NetworkSettings NetworkSettings
 	Health          string
 }
 
 // NetworkSettings holds the networks data to the Docker provider
-type networkSettings struct {
+type NetworkSettings struct {
 	NetworkMode dockercontainertypes.NetworkMode
 	Ports       nat.PortMap
-	Networks    map[string]*networkData
+	Networks    map[string]*NetworkData
 }
 
 // Network holds the network data to the Docker provider
-type networkData struct {
+type NetworkData struct {
 	Name     string
 	Addr     string
 	Port     int
@@ -128,7 +128,7 @@ func (provider *Docker) Provide(configurationChan chan<- types.ConfigMessage, po
 			ctx := context.Background()
 			version, err := dockerClient.ServerVersion(ctx)
 			log.Debugf("Docker connection established with docker %s (API %s)", version.Version, version.APIVersion)
-			var dockerDataList []dockerData
+			var dockerDataList []DockerData
 			if provider.SwarmMode {
 				dockerDataList, err = listServices(ctx, dockerClient)
 				if err != nil {
@@ -237,7 +237,7 @@ func (provider *Docker) Provide(configurationChan chan<- types.ConfigMessage, po
 	return nil
 }
 
-func (provider *Docker) loadDockerConfig(containersInspected []dockerData) *types.Configuration {
+func (provider *Docker) loadDockerConfig(containersInspected []DockerData) *types.Configuration {
 	var DockerFuncMap = template.FuncMap{
 		"getBackend":                  provider.getBackend,
 		"getIPAddress":                provider.getIPAddress,
@@ -261,13 +261,13 @@ func (provider *Docker) loadDockerConfig(containersInspected []dockerData) *type
 	}
 
 	// filter containers
-	filteredContainers := fun.Filter(func(container dockerData) bool {
+	filteredContainers := fun.Filter(func(container DockerData) bool {
 		return provider.containerFilter(container)
-	}, containersInspected).([]dockerData)
+	}, containersInspected).([]DockerData)
 
-	frontends := map[string][]dockerData{}
-	backends := map[string]dockerData{}
-	servers := map[string][]dockerData{}
+	frontends := map[string][]DockerData{}
+	backends := map[string]DockerData{}
+	servers := map[string][]DockerData{}
 	for _, container := range filteredContainers {
 		frontendName := provider.getFrontendName(container)
 		frontends[frontendName] = append(frontends[frontendName], container)
@@ -277,10 +277,10 @@ func (provider *Docker) loadDockerConfig(containersInspected []dockerData) *type
 	}
 
 	templateObjects := struct {
-		Containers []dockerData
-		Frontends  map[string][]dockerData
-		Backends   map[string]dockerData
-		Servers    map[string][]dockerData
+		Containers []DockerData
+		Frontends  map[string][]DockerData
+		Backends   map[string]DockerData
+		Servers    map[string][]DockerData
 		Domain     string
 	}{
 		filteredContainers,
@@ -297,35 +297,35 @@ func (provider *Docker) loadDockerConfig(containersInspected []dockerData) *type
 	return configuration
 }
 
-func (provider *Docker) hasCircuitBreakerLabel(container dockerData) bool {
+func (provider *Docker) hasCircuitBreakerLabel(container DockerData) bool {
 	return labels.HasCircuitBreakerLabel(container.Labels)
 }
 
-func (provider *Docker) hasLoadBalancerLabel(container dockerData) bool {
+func (provider *Docker) hasLoadBalancerLabel(container DockerData) bool {
 	return labels.HasLoadBalancerLabel(container.Labels)
 }
 
-func (provider *Docker) hasMaxConnLabels(container dockerData) bool {
+func (provider *Docker) hasMaxConnLabels(container DockerData) bool {
 	return labels.HasMaxConnLabels(container.Labels)
 }
 
-func (provider *Docker) getCircuitBreakerExpression(container dockerData) string {
+func (provider *Docker) getCircuitBreakerExpression(container DockerData) string {
 	return labels.GetCircuitBreakerExpression(container.Labels)
 }
 
-func (provider *Docker) getLoadBalancerMethod(container dockerData) string {
+func (provider *Docker) getLoadBalancerMethod(container DockerData) string {
 	return labels.GetLoadBalancerMethod(container.Labels)
 }
 
-func (provider *Docker) getMaxConnAmount(container dockerData) int64 {
+func (provider *Docker) getMaxConnAmount(container DockerData) int64 {
 	return labels.GetMaxConnAmount(container.Labels)
 }
 
-func (provider *Docker) getMaxConnExtractorFunc(container dockerData) string {
+func (provider *Docker) getMaxConnExtractorFunc(container DockerData) string {
 	return labels.GetMaxConnExtractorFunc(container.Labels)
 }
 
-func (provider *Docker) containerFilter(container dockerData) bool {
+func (provider *Docker) containerFilter(container DockerData) bool {
 	_, err := strconv.Atoi(container.Labels["traefik.port"])
 	if len(container.NetworkSettings.Ports) == 0 && err != nil {
 		log.Debugf("Filtering container without port and no traefik.port label %s", container.Name)
@@ -353,23 +353,23 @@ func (provider *Docker) containerFilter(container dockerData) bool {
 	return true
 }
 
-func (provider *Docker) getFrontendName(container dockerData) string {
+func (provider *Docker) getFrontendName(container DockerData) string {
 	return labels.GetFrontendName(container.Labels,
 		"Host:"+provider.getSubDomain(container.Name)+"."+provider.Domain)
 }
 
 // GetFrontendRule returns the frontend rule for the specified container, using
 // it's label. It returns a default one (Host) if the label is not present.
-func (provider *Docker) getFrontendRule(container dockerData) string {
+func (provider *Docker) getFrontendRule(container DockerData) string {
 	return labels.GetFrontendName(container.Labels,
 		"Host:"+provider.getSubDomain(container.Name)+"."+provider.Domain)
 }
 
-func (provider *Docker) getBackend(container dockerData) string {
+func (provider *Docker) getBackend(container DockerData) string {
 	return labels.GetBackend(container.Labels, container.Name)
 }
 
-func (provider *Docker) getIPAddress(container dockerData) string {
+func (provider *Docker) getIPAddress(container DockerData) string {
 	label, err := labels.GetLabel(container.Labels, "traefik.docker.network")
 	if err == nil && label != "" {
 		networkSettings := container.NetworkSettings
@@ -404,7 +404,7 @@ func (provider *Docker) getIPAddress(container dockerData) string {
 	return ""
 }
 
-func (provider *Docker) getPort(container dockerData) string {
+func (provider *Docker) getPort(container DockerData) string {
 	if label := labels.GetPort(container.Labels); len(label) > 0 {
 		return label
 	}
@@ -415,44 +415,44 @@ func (provider *Docker) getPort(container dockerData) string {
 	return ""
 }
 
-func (provider *Docker) getWeight(container dockerData) string {
+func (provider *Docker) getWeight(container DockerData) string {
 	return labels.GetWeight(container.Labels)
 }
 
-func (provider *Docker) getSticky(container dockerData) string {
+func (provider *Docker) getSticky(container DockerData) string {
 	return labels.GetSticky(container.Labels)
 }
 
-func (provider *Docker) getDomain(container dockerData) string {
+func (provider *Docker) getDomain(container DockerData) string {
 	return labels.GetDomain(container.Labels, provider.Domain)
 }
 
-func (provider *Docker) getProtocol(container dockerData) string {
+func (provider *Docker) getProtocol(container DockerData) string {
 	return labels.GetProtocol(container.Labels)
 }
 
-func (provider *Docker) getPassHostHeader(container dockerData) string {
+func (provider *Docker) getPassHostHeader(container DockerData) string {
 	return labels.GetPassHostHeader(container.Labels)
 }
 
-func (provider *Docker) getPriority(container dockerData) string {
+func (provider *Docker) getPriority(container DockerData) string {
 	return labels.GetPriority(container.Labels)
 }
 
-func (provider *Docker) getEntryPoints(container dockerData) []string {
+func (provider *Docker) getEntryPoints(container DockerData) []string {
 	return labels.GetEntryPoints(container.Labels)
 }
 
-func isContainerEnabled(container dockerData, exposedByDefault bool) bool {
+func isContainerEnabled(container DockerData, exposedByDefault bool) bool {
 	return labels.IsContainerEnabled(container.Labels, exposedByDefault)
 }
 
-func listContainers(ctx context.Context, dockerClient client.ContainerAPIClient) ([]dockerData, error) {
+func listContainers(ctx context.Context, dockerClient client.ContainerAPIClient) ([]DockerData, error) {
 	containerList, err := dockerClient.ContainerList(ctx, dockertypes.ContainerListOptions{})
 	if err != nil {
-		return []dockerData{}, err
+		return []DockerData{}, err
 	}
-	containersInspected := []dockerData{}
+	containersInspected := []DockerData{}
 
 	// get inspect containers
 	for _, container := range containerList {
@@ -467,9 +467,9 @@ func listContainers(ctx context.Context, dockerClient client.ContainerAPIClient)
 	return containersInspected, nil
 }
 
-func parseContainer(container dockertypes.ContainerJSON) dockerData {
-	dockerData := dockerData{
-		NetworkSettings: networkSettings{},
+func parseContainer(container dockertypes.ContainerJSON) DockerData {
+	dockerData := DockerData{
+		NetworkSettings: NetworkSettings{},
 	}
 
 	if container.ContainerJSONBase != nil {
@@ -493,9 +493,9 @@ func parseContainer(container dockertypes.ContainerJSON) dockerData {
 			dockerData.NetworkSettings.Ports = container.NetworkSettings.Ports
 		}
 		if container.NetworkSettings.Networks != nil {
-			dockerData.NetworkSettings.Networks = make(map[string]*networkData)
+			dockerData.NetworkSettings.Networks = make(map[string]*NetworkData)
 			for name, containerNetwork := range container.NetworkSettings.Networks {
-				dockerData.NetworkSettings.Networks[name] = &networkData{
+				dockerData.NetworkSettings.Networks[name] = &NetworkData{
 					ID:   containerNetwork.NetworkID,
 					Name: name,
 					Addr: containerNetwork.IPAddress,
@@ -513,10 +513,10 @@ func (provider *Docker) getSubDomain(name string) string {
 	return strings.Replace(strings.TrimPrefix(name, "/"), "/", "-", -1)
 }
 
-func listServices(ctx context.Context, dockerClient client.APIClient) ([]dockerData, error) {
+func listServices(ctx context.Context, dockerClient client.APIClient) ([]DockerData, error) {
 	serviceList, err := dockerClient.ServiceList(ctx, dockertypes.ServiceListOptions{})
 	if err != nil {
-		return []dockerData{}, err
+		return []DockerData{}, err
 	}
 	networkListArgs := filters.NewArgs()
 	networkListArgs.Add("driver", "overlay")
@@ -526,14 +526,14 @@ func listServices(ctx context.Context, dockerClient client.APIClient) ([]dockerD
 	networkMap := make(map[string]*dockertypes.NetworkResource)
 	if err != nil {
 		log.Debug("Failed to network inspect on client for docker, error: %s", err)
-		return []dockerData{}, err
+		return []DockerData{}, err
 	}
 	for _, network := range networkList {
 		networkToAdd := network
 		networkMap[network.ID] = &networkToAdd
 	}
 
-	var dockerDataList []dockerData
+	var dockerDataList []DockerData
 
 	for _, service := range serviceList {
 		dockerData := parseService(service, networkMap)
@@ -544,11 +544,11 @@ func listServices(ctx context.Context, dockerClient client.APIClient) ([]dockerD
 
 }
 
-func parseService(service swarmtypes.Service, networkMap map[string]*dockertypes.NetworkResource) dockerData {
-	dockerData := dockerData{
+func parseService(service swarmtypes.Service, networkMap map[string]*dockertypes.NetworkResource) DockerData {
+	dockerData := DockerData{
 		Name:            service.Spec.Annotations.Name,
 		Labels:          service.Spec.Annotations.Labels,
-		NetworkSettings: networkSettings{},
+		NetworkSettings: NetworkSettings{},
 	}
 
 	if service.Spec.EndpointSpec != nil {
@@ -556,12 +556,12 @@ func parseService(service swarmtypes.Service, networkMap map[string]*dockertypes
 		case swarm.ResolutionModeDNSRR:
 			log.Debug("Ignored endpoint-mode not supported, service name: %s", dockerData.Name)
 		case swarm.ResolutionModeVIP:
-			dockerData.NetworkSettings.Networks = make(map[string]*networkData)
+			dockerData.NetworkSettings.Networks = make(map[string]*NetworkData)
 			for _, virtualIP := range service.Endpoint.VirtualIPs {
 				networkService := networkMap[virtualIP.NetworkID]
 				if networkService != nil {
 					ip, _, _ := net.ParseCIDR(virtualIP.Addr)
-					network := &networkData{
+					network := &NetworkData{
 						Name: networkService.Name,
 						ID:   virtualIP.NetworkID,
 						Addr: ip.String(),
